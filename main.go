@@ -214,9 +214,17 @@ func getStudentSummary(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"summary": fullResponse.String()})
 }
 
+func homeHandler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "✅ Student API is working! Visit /students or /students/{id}")
+}
+
 func main() {
 	r := mux.NewRouter()
 
+	// Root route
+	r.HandleFunc("/", homeHandler).Methods("GET")
+
+	// Student CRUD
 	r.HandleFunc("/students", createStudent).Methods("POST")
 	r.HandleFunc("/students", getStudents).Methods("GET")
 	r.HandleFunc("/students/{id}", getStudent).Methods("GET")
