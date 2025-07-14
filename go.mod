@@ -1,4 +1,4 @@
-module studengo 1.24.4
+module studengo 
 
 go 1.24.4
 
