@@ -7,14 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 )
-
-/////////////////////////
-// 1. Define Student Struct
-/////////////////////////
 
 type Student struct {
 	ID    int    `json:"id"`
@@ -23,29 +21,15 @@ type Student struct {
 	Email string `json:"email"`
 }
 
-/////////////////////////
-// 2. Global Variables (In-memory store + mutex)
-/////////////////////////
-
 var (
 	students = make(map[int]Student)
 	mutex    = &sync.Mutex{}
 )
 
-/////////////////////////
-// 3. HANDLERS
-/////////////////////////
-
-// 🔵 Create Student
 func createStudent(w http.ResponseWriter, r *http.Request) {
 	var student Student
 	err := json.NewDecoder(r.Body).Decode(&student)
-	if err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
-		return
-	}
-
-	if student.Name == "" || student.Email == "" || student.Age <= 0 {
+	if err != nil || student.Name == "" || student.Email == "" || student.Age <= 0 {
 		http.Error(w, "Invalid student data", http.StatusBadRequest)
 		return
 	}
@@ -60,7 +44,6 @@ func createStudent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(student)
 }
 
-// 🟢 Get All Students
 func getStudents(w http.ResponseWriter, r *http.Request) {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -73,7 +56,6 @@ func getStudents(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
-// 🟡 Get Student by ID
 func getStudent(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
@@ -94,7 +76,6 @@ func getStudent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(student)
 }
 
-// 🟠 Update Student by ID
 func updateStudent(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
@@ -105,12 +86,7 @@ func updateStudent(w http.ResponseWriter, r *http.Request) {
 
 	var updated Student
 	err = json.NewDecoder(r.Body).Decode(&updated)
-	if err != nil {
-		http.Error(w, "Invalid input", http.StatusBadRequest)
-		return
-	}
-
-	if updated.Name == "" || updated.Email == "" || updated.Age <= 0 {
+	if err != nil || updated.Name == "" || updated.Email == "" || updated.Age <= 0 {
 		http.Error(w, "Invalid student data", http.StatusBadRequest)
 		return
 	}
@@ -130,7 +106,6 @@ func updateStudent(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(updated)
 }
 
-// 🔴 Delete Student by ID
 func deleteStudent(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
@@ -152,7 +127,6 @@ func deleteStudent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// 🧠 Generate Summary using Ollama
 func getStudentSummary(w http.ResponseWriter, r *http.Request) {
 	params := mux.Vars(r)
 	id, err := strconv.Atoi(params["id"])
@@ -170,14 +144,14 @@ func getStudentSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare prompt for Ollama
-	prompt := fmt.Sprintf("Provide a concise summary of the student profile:\nName: %s\nAge: %d\nEmail: %s\n",
-		student.Name, student.Age, student.Email)
+	prompt := fmt.Sprintf("Summarize this student profile: Name: %s, Age: %d, Email: %s", student.Name, student.Age, student.Email)
 
-	// Prepare request body
 	requestBody := map[string]interface{}{
-		"model":  "llama3",
-		"prompt": prompt,
+		"model":       "llama3",
+		"prompt":      prompt,
+		"temperature": 0.3,
+		"top_p":       0.9,
+		"max_tokens":  50,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -186,16 +160,30 @@ func getStudentSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send POST request to Ollama API
-	resp, err := http.Post("http://localhost:11434/api/generate", "application/json", bytes.NewBuffer(jsonData))
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	req, err := http.NewRequest("POST", "http://localhost:11434/api/generate", bytes.NewBuffer(jsonData))
 	if err != nil {
-		http.Error(w, "Failed to call Ollama API", http.StatusInternalServerError)
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to call Ollama API: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		msg := fmt.Sprintf("Ollama returned status %d", resp.StatusCode)
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+
 	scanner := bufio.NewScanner(resp.Body)
-	var fullResponse string
+	var fullResponse strings.Builder
 
 	for scanner.Scan() {
 		var chunk struct {
@@ -210,7 +198,7 @@ func getStudentSummary(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fullResponse += chunk.Response
+		fullResponse.WriteString(chunk.Response)
 
 		if chunk.Done {
 			break
@@ -223,17 +211,12 @@ func getStudentSummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"summary": fullResponse})
+	json.NewEncoder(w).Encode(map[string]string{"summary": fullResponse.String()})
 }
-
-/////////////////////////
-// 4. MAIN Function
-/////////////////////////
 
 func main() {
 	r := mux.NewRouter()
 
-	// Register routes
 	r.HandleFunc("/students", createStudent).Methods("POST")
 	r.HandleFunc("/students", getStudents).Methods("GET")
 	r.HandleFunc("/students/{id}", getStudent).Methods("GET")
