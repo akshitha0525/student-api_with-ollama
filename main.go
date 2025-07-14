@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -232,6 +233,11 @@ func main() {
 	r.HandleFunc("/students/{id}", deleteStudent).Methods("DELETE")
 	r.HandleFunc("/students/{id}/summary", getStudentSummary).Methods("GET")
 
-	fmt.Println("Server running on http://localhost:8080")
-	http.ListenAndServe(":8080", r)
+	// Read port from environment (required for Render.com)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Default for local dev
+	}
+	fmt.Println("Server running on port", port)
+	http.ListenAndServe(":"+port, r)
 }
